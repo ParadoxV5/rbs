@@ -29,6 +29,7 @@ group :libs do
   gem "dbm"
   gem "mutex_m"
   gem "nkf"
+  gem "pathname"
 end
 
 group :profilers do
@@ -44,6 +45,8 @@ gem "rbs-amber", path: "test/assets/test-gem"
 # Bundled gems
 gem "net-smtp"
 gem 'csv'
+gem 'ostruct'
+gem 'pstore'
 
 group :minitest do
   gem "minitest"

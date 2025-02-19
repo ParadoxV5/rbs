@@ -1,4 +1,5 @@
 #include "rbs_extension.h"
+#include "rbs/util/rbs_constant_pool.h"
 
 #define RESET_TABLE_P(table) (table->size == 0)
 
@@ -8,7 +9,7 @@ id_table *alloc_empty_table(void) {
   *table = (id_table) {
     .size = 10,
     .count = 0,
-    .ids = calloc(10, sizeof(ID)),
+    .ids = calloc(10, sizeof(rbs_constant_id_t)),
     .next = NULL,
   };
 
@@ -61,7 +62,7 @@ void parser_pop_typevar_table(parserstate *state) {
   }
 }
 
-void parser_insert_typevar(parserstate *state, ID id) {
+void parser_insert_typevar(parserstate *state, rbs_constant_id_t id) {
   id_table *table = state->vars;
 
   if (RESET_TABLE_P(table)) {
@@ -70,17 +71,17 @@ void parser_insert_typevar(parserstate *state, ID id) {
 
   if (table->size == table->count) {
     // expand
-    ID *ptr = table->ids;
+    rbs_constant_id_t *ptr = table->ids;
     table->size += 10;
-    table->ids = calloc(table->size, sizeof(ID));
-    memcpy(table->ids, ptr, sizeof(ID) * table->count);
+    table->ids = calloc(table->size, sizeof(rbs_constant_id_t));
+    memcpy(table->ids, ptr, sizeof(rbs_constant_id_t) * table->count);
     free(ptr);
   }
 
   table->ids[table->count++] = id;
 }
 
-bool parser_typevar_member(parserstate *state, ID id) {
+bool parser_typevar_member(parserstate *state, rbs_constant_id_t id) {
   id_table *table = state->vars;
 
   while (table && !RESET_TABLE_P(table)) {
@@ -332,7 +333,29 @@ parserstate *alloc_parser(VALUE buffer, lexstate *lexer, int start_pos, int end_
 
     .vars = NULL,
     .last_comment = NULL,
+
+    .constant_pool = {},
   };
+
+  // The parser's constant pool is mainly used for storing the names of type variables, which usually aren't many.
+  // Below are some statistics gathered from the current test suite. We can see that 56% of parsers never add to their
+  // constant pool at all. The initial capacity needs to be a power of 2. Picking 2 means that we won't need to realloc
+  // in 85% of cases.
+  //
+  // TODO: recalculate these statistics based on a real world codebase, rather than the test suite.
+  //
+  // | Size | Count | Cumulative | % Coverage |
+  // |------|-------|------------|------------|
+  // |   0  | 7,862 |      7,862 |     56%    |
+  // |   1  | 3,196 |     11,058 |     79%    |
+  // |   2  |   778 |     12,719 |     85%    |
+  // |   3  |   883 |     11,941 |     91%    |
+  // |   4  |   478 |     13,197 |     95%    |
+  // |   5  |   316 |     13,513 |     97%    |
+  // |   6  |   288 |     13,801 |     99%    |
+  // |   7  |   144 |     13,945 |    100%    |
+  const size_t initial_pool_capacity = 2;
+  rbs_constant_pool_init(&parser->constant_pool, initial_pool_capacity);
 
   parser_advance(parser);
   parser_advance(parser);
@@ -348,9 +371,16 @@ parserstate *alloc_parser(VALUE buffer, lexstate *lexer, int start_pos, int end_
     parser_push_typevar_table(parser, true);
 
     for (long i = 0; i < rb_array_len(variables); i++) {
-      VALUE index = INT2FIX(i);
-      VALUE symbol = rb_ary_aref(1, &index, variables);
-      parser_insert_typevar(parser, SYM2ID(symbol));
+      VALUE symbol = rb_ary_entry(variables, i);
+      VALUE name = rb_sym2str(symbol);
+
+      rbs_constant_id_t id = rbs_constant_pool_insert_shared(
+        &parser->constant_pool,
+        (const uint8_t *) RSTRING_PTR(name),
+        RSTRING_LEN(name)
+      );
+
+      parser_insert_typevar(parser, id);
     }
   }
 
@@ -362,5 +392,6 @@ void free_parser(parserstate *parser) {
   if (parser->last_comment) {
     free_comment(parser->last_comment);
   }
+  rbs_constant_pool_free(&parser->constant_pool);
   free(parser);
 }

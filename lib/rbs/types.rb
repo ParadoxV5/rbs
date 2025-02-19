@@ -15,7 +15,7 @@ module RBS
     end
 
     module NoTypeName
-      def map_type_name
+      def map_type_name(&)
         self
       end
     end
@@ -107,10 +107,16 @@ module RBS
       class Bool < Base; end
       class Void < Base; end
       class Any < Base
+        def initialize(location:, todo: false)
+          super(location: location)
+          todo! if todo
+        end
+
         def to_s(level=0)
           @string || "untyped"
         end
 
+        # @deprecated: this method is now called from the constructor, do not call it from outside
         def todo!
           @string = '__todo__'
           self
@@ -229,7 +235,7 @@ module RBS
 
       include EmptyEachType
 
-      def map_type_name
+      def map_type_name(&)
         ClassSingleton.new(
           name: yield(name, location, self),
           location: location
@@ -323,6 +329,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(name: name,
                        args: args.map {|ty| ty.sub(s) },
                        location: location)
@@ -365,6 +373,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(name: name,
                        args: args.map {|ty| ty.sub(s) },
                        location: location)
@@ -407,6 +417,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         Alias.new(name: name, args: args.map {|ty| ty.sub(s) }, location: location)
       end
 
@@ -463,6 +475,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(types: types.map {|ty| ty.sub(s) },
                        location: location)
       end
@@ -536,7 +550,7 @@ module RBS
             end
           end
         else
-          raise ArgumentError, "only one of `:fields` or `:all_fields` is requireds"
+          raise ArgumentError, "only one of `:fields` or `:all_fields` is required"
         end
 
         @location = location
@@ -568,6 +582,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(
           all_fields: all_fields.transform_values {|ty, required| [ty.sub(s), required] },
           location: location
@@ -658,6 +674,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(type: type.sub(s), location: location)
       end
 
@@ -746,15 +764,26 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(types: types.map {|ty| ty.sub(s) },
                        location: location)
       end
 
       def to_s(level = 0)
+        strs = types.map do |ty|
+          case ty
+          when Intersection
+            ty.to_s([1, level].max)
+          else
+            ty.to_s
+          end
+        end
+
         if level > 0
-          "(#{types.join(" | ")})"
+          "(#{strs.join(" | ")})"
         else
-          types.join(" | ")
+          strs.join(" | ")
         end
       end
 
@@ -826,6 +855,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(types: types.map {|ty| ty.sub(s) },
                        location: location)
       end
@@ -1078,6 +1109,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         map_type {|ty| ty.sub(s) }
       end
 
@@ -1257,6 +1290,8 @@ module RBS
       end
 
       def sub(subst)
+        return self if subst.empty?
+
         map_type { _1.sub(subst) }
       end
 
@@ -1331,6 +1366,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(
           type: type.sub(s),
           required: required,
@@ -1400,6 +1437,8 @@ module RBS
       end
 
       def sub(s)
+        return self if s.empty?
+
         self.class.new(
           type: type.sub(s),
           block: block&.sub(s),

@@ -56,14 +56,14 @@ static void check_children_cap(rbs_loc *loc) {
   }
 }
 
-void rbs_loc_add_required_child(rbs_loc *loc, ID name, range r) {
+void rbs_loc_add_required_child(rbs_loc *loc, rbs_constant_id_t name, range r) {
   rbs_loc_add_optional_child(loc, name, r);
 
   unsigned short last_index = loc->children->len - 1;
   loc->children->required_p |= 1 << last_index;
 }
 
-void rbs_loc_add_optional_child(rbs_loc *loc, ID name, range r) {
+void rbs_loc_add_optional_child(rbs_loc *loc, rbs_constant_id_t name, range r) {
   check_children_cap(loc);
 
   unsigned short i = loc->children->len++;
@@ -168,6 +168,15 @@ static VALUE location_end_pos(VALUE self) {
   return INT2FIX(loc->rg.end);
 }
 
+static rbs_constant_id_t rbs_constant_pool_insert_ruby_symbol(VALUE symbol) {
+  VALUE name = rb_sym2str(symbol);
+
+  // Constants inserted here will never be freed, but that's acceptable because:
+  // 1. Most symbols passed into here will be the ones already inserted into the constant pool by `parser.c`.
+  // 2. Methods like `add_required_child` and `add_optional_child` will usually only get called with a few different symbols.
+  return rbs_constant_pool_insert_constant(RBS_GLOBAL_CONSTANT_POOL, (const uint8_t *) RSTRING_PTR(name), RSTRING_LEN(name));
+}
+
 static VALUE location_add_required_child(VALUE self, VALUE name, VALUE start, VALUE end) {
   rbs_loc *loc = rbs_check_location(self);
 
@@ -175,7 +184,7 @@ static VALUE location_add_required_child(VALUE self, VALUE name, VALUE start, VA
   rg.start = rbs_loc_position(FIX2INT(start));
   rg.end = rbs_loc_position(FIX2INT(end));
 
-  rbs_loc_add_required_child(loc, SYM2ID(name), rg);
+  rbs_loc_add_required_child(loc, rbs_constant_pool_insert_ruby_symbol(name), rg);
 
   return Qnil;
 }
@@ -187,7 +196,7 @@ static VALUE location_add_optional_child(VALUE self, VALUE name, VALUE start, VA
   rg.start = rbs_loc_position(FIX2INT(start));
   rg.end = rbs_loc_position(FIX2INT(end));
 
-  rbs_loc_add_optional_child(loc, SYM2ID(name), rg);
+  rbs_loc_add_optional_child(loc, rbs_constant_pool_insert_ruby_symbol(name), rg);
 
   return Qnil;
 }
@@ -195,7 +204,7 @@ static VALUE location_add_optional_child(VALUE self, VALUE name, VALUE start, VA
 static VALUE location_add_optional_no_child(VALUE self, VALUE name) {
   rbs_loc *loc = rbs_check_location(self);
 
-  rbs_loc_add_optional_child(loc, SYM2ID(name), NULL_RANGE);
+  rbs_loc_add_optional_child(loc, rbs_constant_pool_insert_ruby_symbol(name), NULL_RANGE);
 
   return Qnil;
 }
@@ -218,12 +227,18 @@ static VALUE rbs_new_location_from_loc_range(VALUE buffer, rbs_loc_range rg) {
   return obj;
 }
 
+static rbs_constant_id_t rbs_constant_pool_find_ruby_symbol(VALUE symbol) {
+  VALUE name = rb_sym2str(symbol);
+
+  return rbs_constant_pool_find(RBS_GLOBAL_CONSTANT_POOL, (const uint8_t *) RSTRING_PTR(name), RSTRING_LEN(name));
+}
+
 static VALUE location_aref(VALUE self, VALUE name) {
   rbs_loc *loc = rbs_check_location(self);
 
-  ID id = SYM2ID(name);
+  rbs_constant_id_t id = rbs_constant_pool_find_ruby_symbol(name);
 
-  if (loc->children != NULL) {
+  if (loc->children != NULL && id != RBS_CONSTANT_ID_UNSET) {
     for (unsigned short i = 0; i < loc->children->len; i++) {
       if (loc->children->entries[i].name == id) {
         rbs_loc_range result = loc->children->entries[i].rg;
@@ -241,6 +256,10 @@ static VALUE location_aref(VALUE self, VALUE name) {
   rb_raise(rb_eRuntimeError, "Unknown child name given: %s", RSTRING_PTR(string));
 }
 
+static VALUE rbs_constant_to_ruby_symbol(rbs_constant_t *constant) {
+  return ID2SYM(rb_intern2((const char *) constant->start, constant->length));
+}
+
 static VALUE location_optional_keys(VALUE self) {
   VALUE keys = rb_ary_new();
 
@@ -252,8 +271,9 @@ static VALUE location_optional_keys(VALUE self) {
 
   for (unsigned short i = 0; i < children->len; i++) {
     if (RBS_LOC_OPTIONAL_P(loc, i)) {
-      rb_ary_push(keys, ID2SYM(children->entries[i].name));
-
+      rbs_constant_t *key_id = rbs_constant_pool_id_to_constant(RBS_GLOBAL_CONSTANT_POOL, children->entries[i].name);
+      VALUE key_sym = rbs_constant_to_ruby_symbol(key_id);
+      rb_ary_push(keys, key_sym);
     }
   }
 
@@ -271,7 +291,9 @@ static VALUE location_required_keys(VALUE self) {
 
   for (unsigned short i = 0; i < children->len; i++) {
     if (RBS_LOC_REQUIRED_P(loc, i)) {
-      rb_ary_push(keys, ID2SYM(children->entries[i].name));
+      rbs_constant_t *key_id = rbs_constant_pool_id_to_constant(RBS_GLOBAL_CONSTANT_POOL, children->entries[i].name);
+      VALUE key_sym = rbs_constant_to_ruby_symbol(key_id);
+      rb_ary_push(keys, key_sym);
     }
   }
 
